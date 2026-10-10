@@ -46,6 +46,10 @@ class SemanticSearcher:
             rec = self.db.get_file(fid)
             if rec is None:
                 continue
+            # клиент-сервер: FAISS не знает про владельца — post-filter по files.owner_id
+            owner = q.filters.get("owner")
+            if owner is not None and getattr(rec, "owner_id", 0) != owner:
+                continue
             n += 1
             yield Hit(file_id=fid, score=float(score), source=self.name,
                       snippet=rec.path, meta={"ann_rank": n})

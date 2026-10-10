@@ -36,7 +36,8 @@ class ManticoreTextIndexer:
                 doc_id=doc_id, file_id=rec.id, chunk=c.ordinal,
                 title=(c.title or rec.name)[:512], body=c.text,
                 path=rec.path, ext=rec.ext, mime=rec.mime,
-                size=rec.size, mtime=rec.mtime)
+                size=rec.size, mtime=rec.mtime,
+                owner=getattr(rec, "owner_id", 0) or 0)
 
     def remove(self, file_id: int) -> None:
         if self.mc.connected:

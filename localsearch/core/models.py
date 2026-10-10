@@ -24,6 +24,8 @@ class FileRecord:
     extractor: str | None = None        # id сработавшего экстрактора
     parent_id: int | None = None        # для файлов внутри архивов
     member_name: str | None = None      # путь участника внутри архива
+    owner_id: int = 0                   # клиент-сервер: кто загрузил (0 = локальный режим)
+    namespace: str = "local"            # 'local' | 'upload:<user>' | 'remote:<user>'
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod

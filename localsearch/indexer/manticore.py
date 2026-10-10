@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS docs (
     mime        string,
     size        bigint,
     mtime       timestamp,
+    owner       integer,                      -- клиент-сервер: id загрузившего пользователя
     @index(title,body) morphology('en,ru') stopwords('stopwords.txt')
               expand_keywords='1' min_infix_len='3' max_edit_distance='2',
     @index(path,ext,mime) expand_keywords='0'
@@ -87,13 +88,14 @@ class ManticoreClient:
 
     def replace_doc(self, doc_id: int, file_id: int, chunk: int, title: str,
                     body: str, path: str, ext: str, mime: str,
-                    size: int, mtime: float) -> None:
+                    size: int, mtime: float, owner: int = 0) -> None:
         # pymysql paramstyle='format' (%s); Manticore принимает стандартный SQL
         self.execute(
             f"REPLACE INTO {self.index} "
-            "(id,file_id,chunk,title,body,path,ext,mime,size,mtime) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (doc_id, file_id, chunk, title, body[:256_000], path, ext, mime, size, int(mtime)))
+            "(id,file_id,chunk,title,body,path,ext,mime,size,mtime,owner) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (doc_id, file_id, chunk, title, body[:256_000], path, ext, mime, size,
+             int(mtime), owner))
 
     def delete_by_file(self, file_id: int) -> None:
         self.execute(f"DELETE FROM {self.index} WHERE file_id=%s", (file_id,))

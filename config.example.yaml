@@ -57,3 +57,22 @@ plugins:
 
 web_host: 127.0.0.1            # никогда не наружу
 web_port: 8080
+
+# ---------- клиент-серверный режим (без Docker) ----------
+server:
+  # url=None => приложение работает полностью локально (desktop-local).
+  # url задан => тонкий клиент ходит на сервер по HTTP/HTTPS:
+  url: null                    # 'https://search.example.local' | 'http://127.0.0.1:8341'
+  token: null                  # 'lsk_...' или env LOCALSEARCH_TOKEN
+  username: null               # для client login / автологина
+  verify_tls: true             # false | '/etc/localsearch/ca.crt' (свой мини-CA)
+  timeout: 30.0
+  client_id: desk-1            # имя машины для дельта-синхронизации
+  sync_state_dir: .localsearch # кэш отправленных хэшей (дельта-манифесты)
+  # --- параметры самого сервера (localsearch serve-server) ---
+  host: 127.0.0.1              # 0.0.0.0 — только вместе с TLS/VPN!
+  port: 8341
+  admin_user: admin
+  admin_password_env: LOCALSEARCH_ADMIN_PASSWORD
+  max_upload_mb: 50
+  quota_mb_per_user: 5000

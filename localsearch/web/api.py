@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import asyncio
 import base64
 import json
@@ -96,7 +97,7 @@ def create_api(a: Any) -> FastAPI:
         rows = a.db.conn.execute(
             "SELECT body FROM chunks WHERE file_id=? AND ordinal=0", (file_id,)).fetchall()
         preview = rows[0]["body"][:800] if rows else ""
-        d = dict(rec.__dict__)
+        d = dataclasses.asdict(rec)
         d["preview"] = preview
         d["metadata"] = rec.metadata
         if thumb:

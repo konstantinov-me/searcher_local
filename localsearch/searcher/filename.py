@@ -25,10 +25,16 @@ class FilenameSearcher:
             needle = needle[5:].strip()
         if not needle:
             return
+        owner = q.filters.get("owner")          # клиент-сервер: None => все файлы
         is_glob = any(c in needle for c in "*?[]")
-        cand_ids = (self._glob_candidates(needle, q.limit) if is_glob
-                    else self.db.search_names_candidates(needle, q.limit * 4))
+        cand_ids = (self._glob_candidates(needle, q.limit, owner) if is_glob
+                    else self.db.search_names_candidates(needle, q.limit * 4, owner))
         n = 0
+        # для L1 в составе auto-роутинга достаточно слова из запроса:
+        # "документ альфа" ищем как подстроку по каждому слову (имена файлов
+        # обычно короткие); явные префиксы name:/glob работают как раньше
+        words = [w for w in re.findall(r"\w+", needle.lower(), re.UNICODE) if len(w) >= 3] \
+                if q.level == "auto" and not is_glob else []
         lower = needle.lower().lstrip("*?.")
         for fid in cand_ids:
             rec = self.db.get_file(abs(fid))
@@ -41,6 +47,17 @@ class FilenameSearcher:
                 score = 1.0 if ok else 0.0
             else:
                 idx = hay.find(lower)
+                if idx == -1 and words:
+                    best_idx, hit_word = -1, ""
+                    for w in words:
+                        i2 = hay.find(w)
+                        if i2 != -1 and (best_idx == -1 or i2 < best_idx):
+                            best_idx, hit_word = i2, w
+                    idx = best_idx
+                    if idx != -1:
+                        lower_eff = hit_word
+                else:
+                    lower_eff = lower
                 if idx == -1:
                     continue
                 # бонус за совпадение в начале имени и за короткое имя
@@ -52,9 +69,12 @@ class FilenameSearcher:
                 if n >= q.limit:
                     return
 
-    def _glob_candidates(self, pattern: str, limit: int) -> list[int]:
-        like = pattern.replace("*", "%").replace("?", "_").replace("[", "[").lower()
+    def _glob_candidates(self, pattern: str, limit: int,
+                         owner_id: int | None = None) -> list[int]:
+        like = pattern.replace("*", "%").replace("?", "_").lower()
+        owner_sql = "AND owner_id=?" if owner_id is not None else ""
+        params = [like, like] + ([owner_id] if owner_id is not None else []) + [limit]
         rows = self.db.conn.execute(
-            "SELECT id FROM files WHERE lower(name) LIKE ? OR lower(path) LIKE ? LIMIT ?",
-            (like, like, limit)).fetchall()
+            f"SELECT id FROM files WHERE (lower(name) LIKE ? OR lower(path) LIKE ?)"
+            f" {owner_sql} LIMIT ?", params).fetchall()
         return [r["id"] for r in rows]

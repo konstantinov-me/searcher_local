@@ -38,6 +38,29 @@ class WorkersCfg(BaseModel):
     queue_size: int = 10_000              # backpressure
 
 
+class ServerCfg(BaseModel):
+    """Клиент-серверный режим.
+
+    url=None => приложение работает полностью локально (desktop-local).
+    url задан => тонкий клиент: поиск/загрузка идут на сервер по HTTP;
+    токен можно получить логинами или выдать администратором.
+    """
+    url: str | None = None                # 'http://127.0.0.1:8341' | 'http://srv.local:8341'
+    token: str | None = None              # 'lsk_...' (или из env LOCALSEARCH_TOKEN)
+    username: str | None = None           # для `client login` / автологина
+    verify_tls: bool | str = True         # False | путь к CA-файлу для https
+    timeout: float = 30.0
+    client_id: str = "default"            # имя машины/клиента для дельта-синка
+    sync_state_dir: str = ".localsearch"  # где лежит кэш отправленных хэшей
+    # --- параметры самого сервера (serve-server) ---
+    host: str = "127.0.0.1"               # 0.0.0.0 — открыть наружу (тогда TLS/VPN!)
+    port: int = 8341
+    admin_user: str = "admin"             # создаётся при первом запуске
+    admin_password_env: str = "LOCALSEARCH_ADMIN_PASSWORD"
+    max_upload_mb: int = 50
+    quota_mb_per_user: int = 5_000
+
+
 class Settings(BaseModel):
     roots: list[Path] = Field(default_factory=lambda: [Path.home()])
     exclude: list[str] = Field(default_factory=lambda: ["**/.git/**", "**/node_modules/**"])
@@ -52,10 +75,19 @@ class Settings(BaseModel):
     plugins: dict[str, Any] = Field(default_factory=dict)
     web_host: str = "127.0.0.1"
     web_port: int = 8080
+    server: ServerCfg = Field(default_factory=ServerCfg)
 
     @property
     def db_path(self) -> Path:
         return self.data_dir / "meta.db"
+
+    @property
+    def users_db_path(self) -> Path:
+        return self.data_dir / "users.db"
+
+    @property
+    def uploads_dir(self) -> Path:
+        return self.data_dir / "uploads"
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 import threading
@@ -17,7 +18,7 @@ from typing import Any, Iterator
 
 from .models import FileRecord
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(
@@ -30,22 +31,20 @@ CREATE TABLE IF NOT EXISTS files(
     status TEXT DEFAULT 'pending',          -- pending|extracting|indexed|error|skipped
     error TEXT, extractor TEXT,
     parent_id INTEGER, member_name TEXT,
+    owner_id INTEGER DEFAULT 0,             -- клиент-сервер: загрузивший пользователь
+    namespace TEXT DEFAULT 'local',         -- local | upload:<user> | remote:<user>
     metadata TEXT                            -- JSON: EXIF, ID3, схема БД...
 );
 CREATE INDEX IF NOT EXISTS ix_files_status ON files(status);
 CREATE INDEX IF NOT EXISTS ix_files_hash  ON files(content_hash);
 CREATE INDEX IF NOT EXISTS ix_files_name  ON files(name);
+CREATE INDEX IF NOT EXISTS ix_files_owner ON files(owner_id, namespace);
 
 CREATE TABLE IF NOT EXISTS chunks(
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
     title TEXT, body TEXT NOT NULL, meta TEXT,
     PRIMARY KEY(file_id, ordinal)
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
-    title, body, path UNINDEXED, file_id UNINDEXED,
-    tokenize='unicode_ru trigram'           -- unicode_ru: морфология RU+EN (Snowball)
 );
 
 CREATE TABLE IF NOT EXISTS names_trgm(
@@ -65,6 +64,38 @@ CREATE TABLE IF NOT EXISTS jobs(
     kind TEXT, path TEXT, file_id INTEGER, ts REAL, done INTEGER DEFAULT 0
 );
 """
+
+# FTS5-токенизатор подбирается под возможности конкретной сборки SQLite:
+#   unicode_ru trigram — морфология RU+EN (Snowball) + поддержка LIKE/подстрок;
+#   porter             — если unicode_ru собран без Snowball;
+#   trigram            — самый деградированный вариант (без stemming).
+_fts_cache: dict[str, str] = {}
+
+
+def fts_tokenizer(conn: sqlite3.Connection) -> str:
+    """Определить рабочий tokenize для docs_fts в этом окружении."""
+    key = id(conn)
+    if key not in _fts_cache:
+        for tok in ("unicode_ru trigram", "porter", "trigram"):
+            try:
+                conn.execute(f"CREATE VIRTUAL TABLE _tok_probe USING fts5(a, tokenize='{tok}')")
+                conn.execute("DROP TABLE _tok_probe")
+                _fts_cache[key] = tok
+                break
+            except sqlite3.OperationalError:
+                continue
+        else:
+            _fts_cache[key] = "unicode61"
+    return _fts_cache[key]
+
+
+def create_docs_fts(conn: sqlite3.Connection) -> None:
+    """Создать docs_fts с подобранным токенизатором (idempotent)."""
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
+            title, body, path UNINDEXED, file_id UNINDEXED,
+            tokenize='%s'
+        )""" % fts_tokenizer(conn))
 
 
 def trigrams(s: str) -> set[str]:
@@ -89,9 +120,17 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys=ON")
         with self._lock, self.conn:
             self.conn.executescript(_SCHEMA)
-            v = self.conn.execute("PRAGMA user_version").fetchone()[0]
-            if v < SCHEMA_VERSION:
-                self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            create_docs_fts(self.conn)      # tokenize подбирается под сборку SQLite
+            self._migrate()
+            self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+    def _migrate(self) -> None:
+        """Инкрементальные миграции для существующих БД (v1 → v2: owner_id/namespace)."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(files)")}
+        if "owner_id" not in cols:
+            self.conn.execute("ALTER TABLE files ADD COLUMN owner_id INTEGER DEFAULT 0")
+        if "namespace" not in cols:
+            self.conn.execute("ALTER TABLE files ADD COLUMN namespace TEXT DEFAULT 'local'")
 
     # ------------------------- CRUD файлов ------------------------- #
 
@@ -99,15 +138,18 @@ class Database:
         with self._lock, self.conn:
             cur = self.conn.execute(
                 """INSERT INTO files(path,name,ext,mime,size,mtime,ctime,content_hash,
-                                       status,error,extractor,parent_id,member_name,metadata)
+                                       status,error,extractor,parent_id,member_name,
+                                       owner_id,namespace,metadata)
                    VALUES(:path,:name,:ext,:mime,:size,:mtime,:ctime,:content_hash,
-                          :status,:error,:extractor,:parent_id,:member_name,:metadata)
+                          :status,:error,:extractor,:parent_id,:member_name,
+                          :owner_id,:namespace,:metadata)
                    ON CONFLICT(path) DO UPDATE SET
                      size=:size, mtime=:mtime, content_hash=:content_hash,
                      status=:status, error=:error, extractor=:extractor,
-                     mime=:mime, metadata=:metadata
+                     mime=:mime, metadata=:metadata,
+                     owner_id=:owner_id, namespace=:namespace
                    RETURNING id""",
-                {**rec.__dict__, "metadata": json.dumps(rec.metadata, ensure_ascii=False)},
+                {**dataclasses.asdict(rec), "metadata": json.dumps(rec.metadata, ensure_ascii=False)},
             )
             return cur.fetchone()[0]
 
@@ -139,9 +181,28 @@ class Database:
             (limit,)).fetchall()
         yield from map(self._row_to_rec, rows)
 
-    def stats(self) -> dict[str, int]:
-        rows = self.conn.execute("SELECT status, COUNT(*) c FROM files GROUP BY status").fetchall()
+    def stats(self, owner_id: int | None = None) -> dict[str, int]:
+        """owner_id=None — общая статистика; иначе — только файлы пользователя."""
+        if owner_id is None:
+            rows = self.conn.execute(
+                "SELECT status, COUNT(*) c FROM files GROUP BY status").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT status, COUNT(*) c FROM files WHERE owner_id=? GROUP BY status",
+                (owner_id,)).fetchall()
         return {r["status"]: r["c"] for r in rows}
+
+    def allowed_file_ids(self, owner_id: int | None) -> set[int] | None:
+        """Множество разрешённых file_id для post-filter'а (None => без ограничений).
+
+        Для больших БД используется как лёгкий guard после того, как индексы
+        уже вернули кандидатов; exactness важен для L1/L3 (индексы-кандидаты).
+        """
+        if owner_id is None:
+            return None
+        rows = self.conn.execute("SELECT id FROM files WHERE owner_id=?",
+                                 (owner_id,)).fetchall()
+        return {r[0] for r in rows}
 
     @staticmethod
     def _row_to_rec(row: sqlite3.Row) -> FileRecord:
@@ -168,16 +229,28 @@ class Database:
                 "INSERT INTO names_trgm(file_id,trigram) VALUES(?,?)",
                 [(file_id, t) for t in trigrams(name)])
 
-    def search_names_candidates(self, query: str, limit: int) -> list[int]:
-        """Кандидаты по пересечению триграмм; точная проверка — на стороне серчера."""
+    def search_names_candidates(self, query: str, limit: int,
+                                owner_id: int | None = None) -> list[int]:
+        """Кандидаты по пересечению триграмм; точная проверка — на стороне серчера.
+
+        owner_id (клиент-сервер): JOIN с files => в выдачу попадают только
+        файлы указанного пользователя (None => без фильтра).
+        """
         ts = trigrams(query)
         if not ts:
             return []
         ph = ",".join("?" * len(ts))
+        owner_sql = "AND f.owner_id=?" if owner_id is not None else ""
+        params: list[Any] = [*ts]
+        if owner_id is not None:
+            params.append(owner_id)
+        params.append(limit)
         rows = self.conn.execute(
-            f"""SELECT file_id, COUNT(DISTINCT trigram) c FROM names_trgm
-                WHERE trigram IN ({ph}) GROUP BY file_id ORDER BY c DESC LIMIT ?""",
-            [*ts, limit]).fetchall()
+            f"""SELECT nt.file_id, COUNT(DISTINCT nt.trigram) c FROM names_trgm nt
+                JOIN files f ON f.id=nt.file_id
+                WHERE nt.trigram IN ({ph}) {owner_sql}
+                GROUP BY nt.file_id ORDER BY c DESC LIMIT ?""",
+            params).fetchall()
         return [r["file_id"] for r in rows]
 
     # ------------------------- L3: байтовые триграммы ------------------------- #
@@ -189,15 +262,23 @@ class Database:
             self.conn.executemany("INSERT INTO bytegrams(file_id,gram) VALUES(?,?)",
                                   [(file_id, g) for g in grams])
 
-    def byte_candidates(self, needle: bytes, limit: int) -> list[int]:
+    def byte_candidates(self, needle: bytes, limit: int,
+                        owner_id: int | None = None) -> list[int]:
         if len(needle) < 3:
             return []
         grams = list(byte_trigrams(needle[:30]))     # первые 30 байт запроса достаточно
         ph = ",".join("?" * len(grams))
+        owner_sql = "AND f.owner_id=?" if owner_id is not None else ""
+        params: list[Any] = [*grams]
+        if owner_id is not None:
+            params.append(owner_id)
+        params.append(limit)
         rows = self.conn.execute(
-            f"""SELECT file_id, COUNT(*) c FROM bytegrams WHERE gram IN ({ph})
-                GROUP BY file_id ORDER BY c DESC LIMIT ?""",
-            [*grams, limit]).fetchall()
+            f"""SELECT bg.file_id, COUNT(*) c FROM bytegrams bg
+                JOIN files f ON f.id=bg.file_id
+                WHERE bg.gram IN ({ph}) {owner_sql}
+                GROUP BY bg.file_id ORDER BY c DESC LIMIT ?""",
+            params).fetchall()
         return [r["file_id"] for r in rows]
 
     # ------------------------- Fallback FTS5 (alternate Manticore) ------------------------- #
@@ -208,3 +289,21 @@ class Database:
             self.conn.execute(
                 "INSERT INTO docs_fts(title,body,path,file_id) VALUES(?,?,?,?)",
                 (title, body, path, str(file_id)))
+
+    def fts_search(self, match: str, limit: int,
+                   owner_id: int | None = None) -> list[dict[str, Any]]:
+        """FTS5-поиск с опциональным фильтром по владельцу (клиент-сервер)."""
+        owner_sql = "JOIN files f ON f.id=CAST(docs_fts.file_id AS INTEGER) AND f.owner_id=?" \
+            if owner_id is not None else ""
+        sql = (f"SELECT docs_fts.file_id, title,"
+               f" snippet(docs_fts,1,'<b>','</b>','…',8) AS snip,"
+               f" bm25(docs_fts) AS weight FROM docs_fts {owner_sql}"
+               f" WHERE docs_fts MATCH ? LIMIT ?")
+        params: list[Any] = [owner_id] if owner_id is not None else []
+        params += [match, limit]
+        out = []
+        for row in self.conn.execute(sql, params).fetchall():
+            d = dict(row)
+            d["weight"] = -d["weight"]      # bm25 в FTS5 отрицательный: меньше = лучше
+            out.append(d)
+        return out

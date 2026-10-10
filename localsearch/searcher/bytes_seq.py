@@ -70,8 +70,9 @@ class BytesSeqSearcher:
         needle = parse_bytes_query(q.raw)
         if not needle or len(needle) < 3:
             return
+        owner = q.filters.get("owner")          # клиент-сервер
         produced = set()
-        for fid in self.db.byte_candidates(needle, q.limit * 3):
+        for fid in self.db.byte_candidates(needle, q.limit * 3, owner):
             rec = self.db.get_file(fid)
             if rec is None:
                 continue
@@ -87,8 +88,11 @@ class BytesSeqSearcher:
         # деградация: файлы сверх лимита индекса не покрыты триграммами —
         # полный on-disk обход только если явно попросили (?deep=1 в filters)
         if q.filters.get("deep"):
+            owner_sql = " AND owner_id=?" if owner is not None else ""
+            params = (owner,) if owner is not None else ()
             for rec in self.db.conn.execute(
-                    "SELECT id, path FROM files WHERE status='indexed'").fetchall():
+                    "SELECT id, path FROM files WHERE status='indexed'"
+                    + owner_sql, params).fetchall():
                 if rec["id"] in produced:
                     continue
                 pos = self._scan_file(rec["path"], needle)

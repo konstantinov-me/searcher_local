@@ -43,9 +43,16 @@ class PhrasesSearcher:
 
     @staticmethod
     def _filters(q: QuerySpec) -> str:
-        """SQL-условия поверх атрибутов индекса из фильтров UI."""
+        """SQL-условия поверх атрибутов индекса из фильтров UI + прав доступа.
+
+        Клиент-сервер: сервер кладёт в q.filters['owner'] id пользователя
+        (или None для global-поиска) — для Manticore это фильтр по атрибуту
+        `owner`, для sqlite_fts — JOIN с таблицей files (см. SqliteFtsBackend).
+        """
         parts: list[str] = []
         f = q.filters
+        if f.get("owner") is not None:
+            parts.append(f"owner = {int(f['owner'])}")
         if f.get("ext"):
             vals = ",".join(f"'{e}'" for e in f["ext"])
             parts.append(f"ext IN ({vals})")
@@ -59,13 +66,16 @@ class PhrasesSearcher:
 
 
 class SqliteFtsBackend:
-    """Минимальный бэкенд с тем же API .search(), что ManticoreClient (для sqlite_fts)."""
+    """Минимальный бэкенд с тем же API .search(), что ManticoreClient (для sqlite_fts).
+
+    owner-фильтр реализован через db.fts_search(owner_id=...) (JOIN files).
+    """
 
     def __init__(self, db: Any):
         self.db = db
 
     def search(self, query: str, mode: str = "fulltext", limit: int = 50,
-               filters_sql: str = "") -> list[dict[str, Any]]:
+               filters_sql: str = "", owner_id: int | None = None) -> list[dict[str, Any]]:
         if mode == "phrase":
             match = f'"{query.replace(chr(34), "")}"'
         elif mode == "fuzzy":
@@ -75,11 +85,4 @@ class SqliteFtsBackend:
             match = " OR ".join(f"{b}* " for b in list(bg)[:8])
         else:
             match = query
-        sql = (f"SELECT file_id, title, snippet(docs_fts,1,'<b>','</b>','…',8) AS snip,"
-               f" bm25(docs_fts) AS weight FROM docs_fts WHERE docs_fts MATCH ? LIMIT ?")
-        out = []
-        for row in self.db.conn.execute(sql, (match, limit)).fetchall():
-            d = dict(row)
-            d["weight"] = -d["weight"]      # bm25 в FTS5 отрицательный: меньше = лучше
-            out.append(d)
-        return out
+        return self.db.fts_search(match, limit, owner_id=owner_id)
