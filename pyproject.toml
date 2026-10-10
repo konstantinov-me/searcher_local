@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localsearch"
+version = "0.1.0"
+description = "Локальный поисковик по файлам: рекурсивный обход, извлечение содержимого, Manticore Search, байтовый и семантический поиск"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "LocalSearch contributors" }]
+keywords = ["search", "fulltext", "manticore", "local-first", "plugins"]
+
+dependencies = [
+    "pyyaml>=6",
+    "pydantic>=2",
+    "typer>=0.12",        # CLI
+    "rich>=13",           # таблицы в CLI
+    "fastapi>=0.110",     # web UI + API
+    "uvicorn[standard]>=0.29",
+    "watchdog>=4",        # L0: наблюдение за ФС (опционально на рантайм)
+]
+
+[project.optional-dependencies]
+# ядро работает без них — экстракторы проверяют наличие при импорте
+formats = [
+    "pypdf>=4",
+    "pdfplumber>=0.11",
+    "charset-normalizer>=3",
+    "piexif>=1.1",
+    "Pillow>=10",
+    "blake3>=1",
+]
+manticore = ["pymysql>=1.1"]
+semantic = [
+    "sentence-transformers>=3",
+    "faiss-cpu>=1.8",
+    "numpy>=1.26",
+]
+archives = ["py7zr>=0.20", "rarfile>=4"]
+ocr = ["pytesseract>=0.3", "pdf2image>=1.17"]
+db = ["dbfread>=2"]
+all = ["localsearch[formats,manticore,semantic,archives,ocr,db]"]
+dev = ["pytest>=8", "ruff>=0.4"]
+
+[project.scripts]
+localsearch = "localsearch.cli:app"
+
+# entry-points собственных плагинов — демонстрация механизма расширения:
+# [project.entry-points."localsearch.extractors"]
+#   myco_lsd = "myco_lsd.factory:build"
+
+[tool.setuptools.packages.find]
+include = ["localsearch*"]
+
+[tool.ruff]
+line-length = 100
