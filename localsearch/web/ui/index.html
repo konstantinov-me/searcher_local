@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalSearch</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1>🔎 LocalSearch</h1>
+  <span id="backend" class="badge"></span>
+  <span id="progress" class="muted"></span>
+</header>
+<main>
+  <form id="f">
+    <input id="q" placeholder='запрос…   "точная фраза"   ~с опечаткой   bytes:DEADBEEF   img:кот на подоконнике' autofocus>
+    <select id="level">
+      <option value="auto">авто</option>
+      <option value="name">L1 имена</option>
+      <option value="phrase">L2 фразы</option>
+      <option value="fuzzy">L2 fuzzy</option>
+      <option value="bytes">L3 байты</option>
+      <option value="semantic">L4 смысл</option>
+    </select>
+    <button>Искать</button>
+  </form>
+  <div id="meta" class="muted"></div>
+  <ul id="results"></ul>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

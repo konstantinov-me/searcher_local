@@ -1,0 +1,25 @@
+[Unit]
+Description=LocalSearch Server (HTTP API + индексация)
+Documentation=file:/opt/localsearch/README.md
+After=network-online.target manticore.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=localsearch
+Group=localsearch
+WorkingDirectory=/opt/localsearch
+EnvironmentFile=-/etc/default/localsearch-server
+# LOCALSEARCH_ADMIN_PASSWORD задаётся в EnvironmentFile, не в этом юните
+ExecStart=/opt/localsearch/.venv/bin/localsearch serve-server \
+          --host 127.0.0.1 --port 8341
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=60
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

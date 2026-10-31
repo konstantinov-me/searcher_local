@@ -1,0 +1,27 @@
+services:
+  manticore:
+    image: manticoresearch/manticore:latest   # 6.x; для пина: manticore:6.3.x
+    container_name: localsearch-manticore
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9306:9306"   # MySQL-протокол — только localhost!
+      - "127.0.0.1:9308:9308"   # HTTP JSON API
+    volumes:
+      - ./manticore/manticore.conf:/etc/manticoresearch/manticore.conf:ro
+      - ./manticore/stopwords.txt:/opt/manticore/stopwords.txt:ro
+      - manticore-data:/var/lib/manticore
+      - manticore-log:/var/log/manticore
+    environment:
+      - MANTICORE_CONFIG=/etc/manticoresearch/manticore.conf
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h127.0.0.1 -P9306 -e 'SHOW STATUS LIKE \"uptime\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+
+volumes:
+  manticore-data:
+  manticore-log:

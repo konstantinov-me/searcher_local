@@ -1,0 +1,17 @@
+# ============================================================================
+# LocalSearch — обязательные зависимости (ядро, сервер и клиент)
+# Установка:  pip install -r requirements.txt
+#
+# Ядро работает БЕЗ опциональных библиотек: экстракторы и индексеры проверяют
+# их наличие при импорте и graceful-degrade (см. requirements-optional.txt).
+# ============================================================================
+
+pyyaml>=6                  # чтение config.yaml
+pydantic>=2                # модели настроек и контрактов
+typer>=0.12                # CLI (localsearch scan / query / serve / sync ...)
+rich>=13                   # таблицы и прогресс в CLI
+fastapi>=0.110             # REST API + WebSocket сервера и web UI
+uvicorn[standard]>=0.29    # ASGI-сервер (websockets включены в extra "standard")
+python-multipart>=0.0.9    # приём multipart-загрузок в POST /api/ingest/upload
+requests>=2.31             # HTTP-клиент (localsearch/client) — загрузка манифестов/файлов на сервер
+watchdog>=4                # наблюдение за ФС (режим localsearch watch)
