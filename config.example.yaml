@@ -1,0 +1,78 @@
+# LocalSearch — пример конфигурации. Скопируйте в ./config.yaml или
+# ~/.config/localsearch/config.yaml и отредактируйте.
+
+roots:
+  - /home/username/Documents
+  - /home/username/Downloads
+exclude:
+  - "**/.git/**"
+  - "**/node_modules/**"
+  - "**/__pycache__/**"
+  - "/proc/**"
+  - "/sys/**"
+
+data_dir: data                 # meta.db, vectors.faiss — всё здесь
+
+# текстовый бэкенд: manticore | sqlite_fts (zero-deps fallback)
+indexer_backend: manticore
+manticore:
+  host: 127.0.0.1
+  port: 9306                   # MySQL-протокол docker-контейнера
+  index: docs
+  realtime: true
+
+searchers: [filename, phrases, bytes_seq]   # + semantic, если vector.enabled
+
+vector:                      # L4 — тяжёлый, по умолчанию выключен
+  enabled: false
+  text_model: paraphrase-multilingual-MiniLM-L12-v2
+  image_model: SigLIP
+  dim: 384
+  index_path: data/vectors.faiss
+
+limits:
+  max_file_mb: 50              # файлы больше — только имя + on-disk скан
+  byte_index_max_mb: 50        # сколько байт на файл идёт в trigram-индекс
+  max_chunk_tokens: 512
+  chunk_overlap: 64
+  head_probe_kb: 8
+
+workers:
+  processes: 4                 # CPU-тяжёлые экстракторы (pdf/archive/AI)
+  threads: 8                   # I/O обход дерева
+  queue_size: 10000            # backpressure сканера
+
+plugins:
+  extractors:
+    enable: [text, pdf, office, lexicon, dbfiles, image_meta, archive, binary_fallback]
+    disable: []                # ['image_ai'] — точечно выключить модуль
+    order: [text, pdf, office, lexicon, dbfiles, image_meta, archive]
+    overrides:
+      pdf: { ocr: false }      # pytesseract OCR сканов — включить явно
+      lexicon: { dsl_max_articles: 50000 }
+  indexers:
+    enable: [name_index, byte_index, manticore_text]   # + vector_store при vector.enabled
+  searchers:
+    enable: [filename, phrases, bytes_seq]             # + semantic при vector.enabled
+
+web_host: 127.0.0.1            # никогда не наружу
+web_port: 8080
+
+# ---------- клиент-серверный режим (без Docker) ----------
+server:
+  # url=None => приложение работает полностью локально (desktop-local).
+  # url задан => тонкий клиент ходит на сервер по HTTP/HTTPS:
+  url: null                    # 'https://search.example.local' | 'http://127.0.0.1:8341'
+  token: null                  # 'lsk_...' или env LOCALSEARCH_TOKEN
+  username: null               # для client login / автологина
+  verify_tls: true             # false | '/etc/localsearch/ca.crt' (свой мини-CA)
+  timeout: 30.0
+  client_id: desk-1            # имя машины для дельта-синхронизации
+  sync_state_dir: .localsearch # кэш отправленных хэшей (дельта-манифесты)
+  # --- параметры самого сервера (localsearch serve-server) ---
+  host: 127.0.0.1              # 0.0.0.0 — только вместе с TLS/VPN!
+  port: 8341
+  admin_user: admin
+  admin_password_env: LOCALSEARCH_ADMIN_PASSWORD
+  max_upload_mb: 50
+  quota_mb_per_user: 5000
