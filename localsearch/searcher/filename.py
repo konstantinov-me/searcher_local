@@ -28,18 +28,29 @@ class FilenameSearcher:
             return
         owner = q.filters.get("owner")          # клиент-сервер: None => все файлы
         is_glob = any(c in needle for c in "*?[]")
-        cand_ids = (self._glob_candidates(needle, q.limit, owner) if is_glob
-                    else self.db.search_names_candidates(needle, q.limit * 4, owner))
+        words = [w for w in re.findall(r"\w+", needle.lower(), re.UNICODE) if len(w) >= 3]
+        cand_ids: set[int] = set()
+        if is_glob:
+            cand_ids.update(self._glob_candidates(needle, q.limit, owner))
+        else:
+            # кандидаты по триграммам всего запроса и по каждому слову отдельно —
+            # иначе многословный автозапрос ("документ альфа") не найдёт короткое
+            # имя "a.txt": ни одно слово не даёт пересечения с общими триграммами
+            terms = [needle] + ([w for w in words if w != needle] if q.level == "auto" else [])
+            for t in terms:
+                cand_ids.update(self.db.search_names_candidates(t, q.limit * 4, owner))
+            cand_ids = sorted(cand_ids)
         n = 0
         # для L1 в составе auto-роутинга достаточно слова из запроса:
         # "документ альфа" ищем как подстроку по каждому слову (имена файлов
         # обычно короткие); явные префиксы name:/glob работают как раньше
-        words = [w for w in re.findall(r"\w+", needle.lower(), re.UNICODE) if len(w) >= 3] \
-                if q.level == "auto" and not is_glob else []
+        words = words if q.level == "auto" and not is_glob else []
         lower = needle.lower().lstrip("*?.")
         for fid in cand_ids:
             rec = self.db.get_file(abs(fid))
             if rec is None:
+                continue
+            if owner is not None and rec.owner_id != owner:   # defense-in-depth
                 continue
             hay = (rec.name if fid > 0 else rec.path).lower()
             if is_glob:
