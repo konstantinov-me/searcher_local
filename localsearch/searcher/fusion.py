@@ -50,12 +50,12 @@ def rrf(hits_by_source: dict[str, list[Hit]], k: int = 60) -> list[Hit]:
     out: list[Hit] = []
     for fid, score in ordered:
         h = best[fid]
+        ranks = {src: next((i for i, x in enumerate(hits, 1) if x.file_id == fid), None)
+                 for src, hits in hits_by_source.items()
+                 if any(x.file_id == fid for x in hits)}
         out.append(Hit(file_id=fid, score=score, source="fusion:" + "+".join(hits_by_source),
                        snippet=h.snippet, span=h.span,
-                       meta={**h.meta, "per_source_ranks": {
-                           src: next((i for i, x in enumerate(hits, 1) if x.file_id == fid)
-                                     for src, hits in hits_by_source.items()
-                                     if any(x.file_id == fid for x in hits))}}))
+                       meta={**h.meta, "per_source_ranks": ranks}))
     return out
 
 

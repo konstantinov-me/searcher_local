@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS chunks(
 );
 
 CREATE TABLE IF NOT EXISTS names_trgm(
-    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    file_id INTEGER NOT NULL,               -- id файла или -id (виртуальный id для пути)
     trigram TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_trgm ON names_trgm(trigram);
@@ -131,6 +131,22 @@ class Database:
             self.conn.execute("ALTER TABLE files ADD COLUMN owner_id INTEGER DEFAULT 0")
         if "namespace" not in cols:
             self.conn.execute("ALTER TABLE files ADD COLUMN namespace TEXT DEFAULT 'local'")
+        # names_trgm хранит и «виртуальные» id (-file_id) для путей, поэтому FK
+        # недопустим; пересоздаём таблицу из старых схем с REFERENCES.
+        fk = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='names_trgm'"
+        ).fetchone()
+        if fk and "REFERENCES" in (fk[0] or ""):
+            with self.conn:
+                self.conn.executescript(
+                    """BEGIN;
+                       ALTER TABLE names_trgm RENAME TO names_trgm_old;
+                       CREATE TABLE names_trgm(
+                           file_id INTEGER NOT NULL, trigram TEXT NOT NULL);
+                       INSERT INTO names_trgm SELECT file_id, trigram FROM names_trgm_old;
+                       DROP TABLE names_trgm_old;
+                       CREATE INDEX IF NOT EXISTS ix_trgm ON names_trgm(trigram);
+                       COMMIT;""")
 
     # ------------------------- CRUD файлов ------------------------- #
 

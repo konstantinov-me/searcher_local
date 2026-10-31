@@ -95,8 +95,32 @@ pip install -e ".[semantic]"        # sentence-transformers + faiss-cpu (L4)
 pip install -e ".[all]"             # всё сразу
 ```
 
+### 3.1. Установка через requirements.txt
+
+Если вы не ставите пакет (`-e .`), а разворачиваете исходники как есть,
+используйте файлы зависимостей — они соответствуют extras из `pyproject.toml`:
+
+| Файл                       | Для чего                                                                 |
+|----------------------------|--------------------------------------------------------------------------|
+| `requirements.txt`         | Обязательное ядро: API-сервер, CLI, web UI, watch, клиентский HTTP       |
+| `requirements-server.txt`  | Сервер без Docker: ядро + pymysql (Manticore; опционально — FTS5 fallback)|
+| `requirements-client.txt`  | Тонкий клиент на рабочем месте: только requests + локальный конфиг/watch |
+| `requirements-optional.txt`| Все модули обработки форматов: PDF/Office, archives, OCR, DB, semantic   |
+
+```bash
+pip install -r requirements.txt           # полный локальный режим (server+client в одном)
+pip install -r requirements-server.txt    # только сервер
+pip install -r requirements-client.txt    # только клиент (минимум зависимостей)
+pip install -r requirements-optional.txt  # подключить все экстракторы форматов
+```
+
+Ядро запускается и работает даже без `requirements-optional.txt`:
+экстракторы проверяют наличие библиотек при импорте и просто пропускают
+форматы, для которых зависимости не установлены (graceful degradation).
+
 Тонкому клиенту **не нужны** ни Manticore, ни тяжёлые extras:
-`pip install -e ".[client]"` — и можно работать с сервером.
+`pip install -e ".[client]"` или `pip install -r requirements-client.txt`
+— и можно работать с сервером.
 
 ## 4. Быстрый старт (локальный режим)
 
@@ -447,6 +471,10 @@ localsearch/
 ├── app.py         композиция App (graceful degrade Manticore→FTS5)
 ├── cli.py         typer CLI (все команды §12)
 └── settings.py    pydantic-конфиг (все ключи §11)
+requirements.txt / requirements-server.txt / requirements-client.txt
+                 обязательные зависимости (ядро / сервер / тонкий клиент)
+requirements-optional.txt
+                 модули форматов: PDF/Office, archives, OCR, DB, semantic
 deploy/
 ├── docker-compose.yml            Manticore в контейнере (опция)
 ├── manticore/                    manticore.conf + stopwords (бинарная установка)

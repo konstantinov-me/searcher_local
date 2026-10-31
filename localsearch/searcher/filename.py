@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 from typing import Any, Iterator
 
 from ..core.contracts import Hit, QuerySpec
